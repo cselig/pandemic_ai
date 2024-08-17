@@ -4,7 +4,9 @@ import logging
 import random
 from dataclasses import dataclass
 
-MAX_TURNS = 15
+import interfaces
+
+MAX_TURNS = 10
 SUBTURNS = 2
 MAX_OUTBREAKS = 3
 OUTBREAK_THRESHOLD = 3
@@ -43,29 +45,35 @@ city_graph = {
 }
 
 
-class Move(abc.ABC):
+@dataclass
+class CureMove(interfaces.Move):
   pass
 
 
 @dataclass
-class CureMove(Move):
-  pass
-
-
-@dataclass
-class LocationMove(Move):
+class LocationMove(interfaces.Move):
   destination: City
 
 
 @dataclass
-class BoardState:
+class InfectMove(interfaces.Move):
+  pass
+
+
+@dataclass
+class InfectCityMove(InfectMove):
+  city: City
+
+
+@dataclass
+class BoardState(interfaces.BoardState):
   pawn1_location: City
   pawn2_location: City
   infection_counts: dict[City, int]
   player_turn: int    # 1 or 2
-  turn_number: int    # 1 to 5
-  subturn_number: int # 1 to 4
-  outbreak_count: int # 0 to 3
+  turn_number: int    # 1 to MAX_TURNS
+  subturn_number: int # 1 to SUBTURNS
+  outbreak_count: int # 0 to MAX_OUTBREAKS
 
   def __init__(self):
     # initial infections
@@ -78,12 +86,20 @@ class BoardState:
     self.turn_number = 1
     self.subturn_number = 1
     self.outbreak_count = 0
+    self.infect_next_move = False
+
+  def get_value(self) -> int:
+    result = 0
+    for _, count in self.infection_counts.items():
+      result -= count ** count
+    return result
 
   def infect(self, n = 1):
     for _ in range(n):
-      city = random.choice(list(City))
-      logging.debug("infecting: %s", city.name)
-      self.infection_counts[city] += 1
+      self.infect_city(random.choice(list(City)))
+
+  def infect_city(self, city: City):
+    self.infection_counts[city] += 1
 
   def current_player_location(self) -> City:
     return self.pawn1_location if self.player_turn == 1 else self.pawn2_location
@@ -97,13 +113,16 @@ class BoardState:
   def is_terminal(self):
     return self.is_won() or self.is_lost()
 
-  def get_valid_moves(self) -> list[Move]:
+  def get_valid_moves(self) -> list[interfaces.Move]:
+    if self.infect_next_move:
+      return [InfectMove()]
+
     moves = [LocationMove(c) for c in city_graph[self.current_player_location()]]
     if self.infection_counts[self.current_player_location()] > 0:
       moves.append(CureMove())
     return moves
 
-  def make_move(self, move: Move):
+  def make_move(self, move: interfaces.Move):
     if isinstance(move, CureMove):
       assert self.infection_counts[self.current_player_location()] > 0
       self.infection_counts[self.current_player_location()] -= 1
@@ -115,22 +134,26 @@ class BoardState:
         self.pawn2_location = move.destination
       else:
         raise ValueError()
+    elif isinstance(move, InfectMove):
+      city_to_infect = random.choice(list(City))
+      if self.infection_counts[city_to_infect] < OUTBREAK_THRESHOLD:
+        self.infect_city(city_to_infect)
+      else:
+        self._do_outbreak(city_to_infect, set([city_to_infect]))
+      self.infect_next_move = False
+      return # break early and don't increment turn numbers
     else:
       raise NotImplementedError()
 
+    self.infect_next_move = True
+
     # increment turn numbers
     self.subturn_number += 1
-    if self.subturn_number == SUBTURNS:
+    if self.subturn_number > SUBTURNS:
       self.subturn_number = 1
       self.player_turn = 1 if self.player_turn == 2 else 2
       if self.player_turn == 1:
         self.turn_number += 1
-
-    city_to_infect = random.choice(list(City))
-    if self.infection_counts[city_to_infect] < OUTBREAK_THRESHOLD:
-      self.infection_counts[city_to_infect] += 1
-    else:
-      self._do_outbreak(city_to_infect, set([city_to_infect]))
 
   def _do_outbreak(self, city: City, outbroken_cities: set[City]):
     self.outbreak_count += 1

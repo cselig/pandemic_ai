@@ -1,10 +1,10 @@
 import logging
 
-from simplified_pandemic import policies
+import interfaces
 import simplified_pandemic.data_structures as ds
 
 
-def play_game(actor: policies.Policy) -> int:
+def play_game(actor: interfaces.Policy) -> int:
   state = ds.BoardState()
 
   logging.debug(state)
